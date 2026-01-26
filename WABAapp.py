@@ -19,15 +19,31 @@ def load_data():
 
 df = load_data()
 
+from datetime import date
+
 # =========================
 # SIDEBAR FILTER
 # =========================
 st.sidebar.header("🔎 Filter")
 
+# 🎯 Default range Oct – Dec
+default_start = date(2025, 10, 1)
+default_end = date(2025, 12, 31)
+
 date_range = st.sidebar.date_input(
     "Date Range",
-    [df['Date'].min(), df['Date'].max()]
+    value=[default_start, default_end],
+    min_value=df['Date'].min(),
+    max_value=df['Date'].max()
 )
+
+# Validasi input
+if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+    start_date, end_date = date_range
+else:
+    st.warning("📅 Please select both start and end dates.")
+    st.stop()
+
 
 account_list = sorted(df['account_no'].unique())
 selected_accounts = st.sidebar.multiselect(
@@ -37,8 +53,8 @@ selected_accounts = st.sidebar.multiselect(
 )
 
 df_filtered = df[
-    (df['Date'] >= pd.to_datetime(date_range[0])) &
-    (df['Date'] <= pd.to_datetime(date_range[1])) &
+    (df['Date'] >= pd.to_datetime(start_date)) &
+    (df['Date'] <= pd.to_datetime(end_date)) &
     (df['account_no'].isin(selected_accounts))
 ]
 
@@ -189,3 +205,84 @@ if not error_df.empty:
 
 else:
     st.success("No error messages in selected filter 🎉")
+
+# =========================
+# 5️⃣ TEMPLATE STATUS DISTRIBUTION
+# =========================
+st.subheader("5️⃣ Template Name Distribution")
+
+template_status = df_filtered.groupby(['template_name', 'status'])['count'].sum().reset_index()
+
+template_pivot = template_status.pivot(index='template_name', columns='status', values='count').fillna(0)
+
+# Pastikan semua status ada
+for s in ['delivered', 'failed', 'read', 'sent']:
+    if s not in template_pivot.columns:
+        template_pivot[s] = 0
+
+# Hitung total per template
+template_pivot['total'] = template_pivot.sum(axis=1)
+template_pivot = template_pivot.sort_values(by='total', ascending=False)
+
+total_templates = template_pivot.shape[0]
+
+# 🎛 Kontrol Top N
+colA, colB = st.columns([1,3])
+
+with colA:
+    top_n = st.number_input(
+        "Show Top N Templates",
+        min_value=5,
+        max_value=total_templates,
+        value=20,
+        step=5
+    )
+
+with colB:
+    st.markdown(f"**Total Template Names Available:** {total_templates}")
+
+# Ambil sesuai Top N
+template_view = template_pivot.head(top_n).reset_index()
+title_text = f"Top {top_n} Templates — Status Distribution"
+
+# Ubah ke long format
+template_long = template_view.melt(
+    id_vars='template_name',
+    value_vars=['delivered', 'failed', 'read', 'sent'],
+    var_name='Status',
+    value_name='Count'
+)
+
+# Warna konsisten
+color_map = {
+    'delivered': '#4C78A8',
+    'failed': '#E45756',
+    'read': '#72B7B2',
+    'sent': '#F2CF5B'
+}
+
+# Chart
+fig_template_status = px.bar(
+    template_long,
+    x='Count',
+    y='template_name',
+    color='Status',
+    orientation='h',
+    title=title_text,
+    color_discrete_map=color_map,
+    barmode='stack'
+)
+
+fig_template_status.update_layout(
+    yaxis={'categoryorder': 'total ascending'},
+    margin=dict(l=10, r=10, t=50, b=10),
+    legend=dict(
+        orientation="h",
+        yanchor="top",
+        y=-0.25,
+        xanchor="center",
+        x=0.5
+    )
+)
+
+st.plotly_chart(fig_template_status, use_container_width=True)

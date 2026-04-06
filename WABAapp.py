@@ -11,7 +11,7 @@ st.title("📊 NPX Messaging Monitoring Dashboard")
 # =========================
 @st.cache_data
 def load_data():
-    df = pd.read_excel("file waba streamlit.xlsx")
+    df = pd.read_excel("Data Query WABA Feb-Apr 2026.xlsx")
     df['Date'] = pd.to_datetime(df['Date'])
     df['template_category'] = df['template_category'].str.upper()
     df['status'] = df['status'].str.lower()
@@ -27,8 +27,8 @@ from datetime import date
 st.sidebar.header("🔎 Filter")
 
 # 🎯 Default range Oct – Dec
-default_start = date(2025, 10, 1)
-default_end = date(2025, 12, 31)
+default_start = date(2026, 2, 1)
+default_end = date(2026, 4, 6)
 
 date_range = st.sidebar.date_input(
     "Date Range",

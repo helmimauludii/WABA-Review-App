@@ -5,7 +5,7 @@ from datetime import date
 
 st.set_page_config(page_title="NPX Messaging Dashboard", layout="wide")
 
-st.title("📊 NPX Messaging Monitoring Dashboard")
+st.title("📊 WABA Messaging Analysis Dashboard")
 
 # =========================
 # FILE UPLOADER (MULTI-FILE)

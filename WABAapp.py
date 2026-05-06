@@ -18,32 +18,53 @@ if uploaded_file is None:
     st.stop() # Menghentikan eksekusi script sampai file diupload
 
 # =========================
-# LOAD DATA
+# LOAD DATA (FLEXIBLE)
 # =========================
 @st.cache_data
 def load_data(file):
-    # Cek ekstensi file untuk menentukan fungsi pandas yang tepat
+    # 1. Cek ekstensi file dan baca data dengan pendeteksi pemisah otomatis
     if file.name.endswith('.csv'):
-        df = pd.read_csv(file)
+        df = pd.read_csv(file, sep=None, engine='python')
     else:
         df = pd.read_excel(file)
         
-    # Validasi keberadaan kolom sesuai dengan format terbaru
+    # 2. STANDARISASI KOLOM (Auto-Clean)
+    # Ubah semua nama kolom jadi huruf kecil dan hapus spasi di awal/akhir
+    df.columns = df.columns.str.strip().str.lower()
+    
+    # 3. MAPPING KOLOM ALTERNATIF
+    # Jika di file namanya beda, otomatis disamakan ke format standar kita
+    kolom_alias = {
+        'error_msg': 'error_message',
+        'count': 'total_messages',
+        'account number': 'account_no',
+        'template category': 'template_category',
+        'template name': 'template_name'
+    }
+    df = df.rename(columns=kolom_alias)
+        
+    # 4. Validasi keberadaan kolom wajib
     required_columns = ['date', 'account_no', 'template_category', 'template_name', 'status', 'total_messages']
     missing_cols = [col for col in required_columns if col not in df.columns]
     
     if missing_cols:
-        st.error(f"❌ File tidak valid. Kolom berikut tidak ditemukan: {', '.join(missing_cols)}")
+        # Tampilkan error DAN tunjukkan kolom apa yang sebenarnya dibaca oleh Pandas
+        st.error(f"❌ File tidak valid. Kolom wajib berikut tidak ditemukan: {', '.join(missing_cols)}")
+        st.info(f"📌 Kolom yang terdeteksi di file Anda: {list(df.columns)}")
         st.stop()
         
-    # Jika kolom error_message tidak ada, buat kolom kosong agar script di bawah tidak error
+    # Jika kolom error_message tidak ada, buat kolom kosong agar script tidak error
     if 'error_message' not in df.columns:
         df['error_message'] = pd.NA
         
-    # Cleaning data & Handle Null (kosong)
-    df['date'] = pd.to_datetime(df['date'])
+    # 5. CLEANING ISI DATA
+    # Konversi tanggal (dayfirst=True membantu jika format file adalah DD/MM/YY)
+    df['date'] = pd.to_datetime(df['date'], dayfirst=True, errors='coerce')
     
-    # Isi nilai kosong pada kategori dan template agar grafik tidak error
+    # Hapus baris yang tanggalnya kosong/gagal terbaca (misal: ada baris total/metadata di paling bawah file)
+    df = df.dropna(subset=['date'])
+    
+    # Isi nilai kosong pada kategori dan template agar chart tidak crash
     df['template_category'] = df['template_category'].fillna('UNKNOWN').astype(str).str.upper()
     df['template_name'] = df['template_name'].fillna('NO TEMPLATE').astype(str)
     

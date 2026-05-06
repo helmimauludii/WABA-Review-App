@@ -28,21 +28,25 @@ def load_data(file):
     else:
         df = pd.read_excel(file)
         
-    # Validasi keberadaan kolom penting
-    required_columns = ['Date', 'template_category', 'status', 'account_no', 'count', 'template_name']
+    # Validasi keberadaan kolom sesuai dengan format terbaru
+    required_columns = ['date', 'account_no', 'template_category', 'template_name', 'status', 'total_messages']
     missing_cols = [col for col in required_columns if col not in df.columns]
     
     if missing_cols:
         st.error(f"❌ File tidak valid. Kolom berikut tidak ditemukan: {', '.join(missing_cols)}")
         st.stop()
         
-    # Jika kolom error_msg tidak ada, buat kolom kosong agar script di bawah tidak error
-    if 'error_msg' not in df.columns:
-        df['error_msg'] = pd.NA
+    # Jika kolom error_message tidak ada, buat kolom kosong agar script di bawah tidak error
+    if 'error_message' not in df.columns:
+        df['error_message'] = pd.NA
         
-    # Cleaning data
-    df['Date'] = pd.to_datetime(df['Date'])
-    df['template_category'] = df['template_category'].astype(str).str.upper()
+    # Cleaning data & Handle Null (kosong)
+    df['date'] = pd.to_datetime(df['date'])
+    
+    # Isi nilai kosong pada kategori dan template agar grafik tidak error
+    df['template_category'] = df['template_category'].fillna('UNKNOWN').astype(str).str.upper()
+    df['template_name'] = df['template_name'].fillna('NO TEMPLATE').astype(str)
+    
     df['status'] = df['status'].astype(str).str.lower()
     
     return df
@@ -56,8 +60,8 @@ df = load_data(uploaded_file)
 st.sidebar.header("🔎 Filter")
 
 # 🎯 Default range otomatis menyesuaikan data yang diupload
-default_start = df['Date'].min().date()
-default_end = df['Date'].max().date()
+default_start = df['date'].min().date()
+default_end = df['date'].max().date()
 
 date_range = st.sidebar.date_input(
     "Date Range",
@@ -82,19 +86,19 @@ selected_accounts = st.sidebar.multiselect(
 
 # Filter Dataset
 df_filtered = df[
-    (df['Date'] >= pd.to_datetime(start_date)) &
-    (df['Date'] <= pd.to_datetime(end_date)) &
+    (df['date'] >= pd.to_datetime(start_date)) &
+    (df['date'] <= pd.to_datetime(end_date)) &
     (df['account_no'].isin(selected_accounts))
 ]
 
-total_messages = df_filtered['count'].sum()
+total_messages = df_filtered['total_messages'].sum()
 
 # =========================
 # 1️⃣ TOTAL MESSAGE + STATUS
 # =========================
 st.subheader("1️⃣ Total Messages & Status Distribution")
 
-status_summary = df_filtered.groupby('status')['count'].sum().reset_index()
+status_summary = df_filtered.groupby('status')['total_messages'].sum().reset_index()
 
 col1, col2 = st.columns([1,2])
 
@@ -105,7 +109,7 @@ with col2:
     fig_status = px.pie(
         status_summary,
         names='status',
-        values='count',
+        values='total_messages',
         title="Message Status Distribution"
     )
     st.plotly_chart(fig_status, use_container_width=True)
@@ -115,13 +119,13 @@ with col2:
 # =========================
 st.subheader("2️⃣ Messages by Type")
 
-type_summary = df_filtered.groupby('template_category')['count'].sum().reset_index()
+type_summary = df_filtered.groupby('template_category')['total_messages'].sum().reset_index()
 
 fig_type = px.bar(
     type_summary,
     x='template_category',
-    y='count',
-    text='count',
+    y='total_messages',
+    text='total_messages',
     title="Message Category Distribution"
 )
 
@@ -130,11 +134,12 @@ st.plotly_chart(fig_type, use_container_width=True)
 # =========================
 # 3️⃣ ERROR VS TOTAL
 # =========================
-st.subheader("3️⃣ Error Code vs Total Messages")
+st.subheader("3️⃣ Error vs Total Messages")
 
-error_df = df_filtered[df_filtered['error_msg'].notna()]
+# Ambil data error (pastikan tidak null dan bukan string kosong)
+error_df = df_filtered[df_filtered['error_message'].notna() & (df_filtered['error_message'].astype(str).str.strip() != "")]
 
-total_error = error_df['count'].sum()
+total_error = error_df['total_messages'].sum()
 success_messages = total_messages - total_error
 
 error_compare = pd.DataFrame({
@@ -158,26 +163,24 @@ st.plotly_chart(fig_error_compare, use_container_width=True)
 # =========================
 st.subheader("4️⃣ Error Code Breakdown (Month on Month)")
 
-error_df = df_filtered[df_filtered['error_msg'].notna()].copy()
-
 if not error_df.empty and total_error > 0:
 
-    error_df['Month'] = error_df['Date'].dt.to_period('M').astype(str)
+    error_df['Month'] = error_df['date'].dt.to_period('M').astype(str)
 
-    # HITUNG TOTAL ERROR
-    total_error_per_code = error_df.groupby('error_msg')['count'].sum().sort_values(ascending=False)
+    # HITUNG TOTAL ERROR PER KODE
+    total_error_per_code = error_df.groupby('error_message')['total_messages'].sum().sort_values(ascending=False)
 
     TOP_N = 8
     top_errors = total_error_per_code.head(TOP_N).index
 
     # Label Others
-    error_df['error_group'] = error_df['error_msg'].where(error_df['error_msg'].isin(top_errors), 'Others')
+    error_df['error_group'] = error_df['error_message'].where(error_df['error_message'].isin(top_errors), 'Others')
 
     # PIVOT
     error_pivot = error_df.pivot_table(
         index='Month',
         columns='error_group',
-        values='count',
+        values='total_messages',
         aggfunc='sum',
         fill_value=0
     ).reset_index()
@@ -235,11 +238,13 @@ else:
 # =========================
 st.subheader("5️⃣ Template Name Distribution")
 
-template_status = df_filtered.groupby(['template_name', 'status'])['count'].sum().reset_index()
+# Filter agar template yang kosong ("NO TEMPLATE") tidak mendominasi chart jika tidak diinginkan
+# (opsional, saat ini dimasukkan semua)
+template_status = df_filtered.groupby(['template_name', 'status'])['total_messages'].sum().reset_index()
 
-template_pivot = template_status.pivot(index='template_name', columns='status', values='count').fillna(0)
+template_pivot = template_status.pivot(index='template_name', columns='status', values='total_messages').fillna(0)
 
-# Pastikan semua status ada
+# Pastikan kolom status standar ada meskipun tidak ada di data agar tidak error
 for s in ['delivered', 'failed', 'read', 'sent']:
     if s not in template_pivot.columns:
         template_pivot[s] = 0
@@ -270,10 +275,13 @@ if total_templates > 0:
     template_view = template_pivot.head(top_n).reset_index()
     title_text = f"Top {top_n} Templates — Status Distribution"
 
+    # Ambil kolom status yang ada secara dinamis untuk melt
+    status_columns = [col for col in template_pivot.columns if col != 'total']
+
     # Ubah ke long format
     template_long = template_view.melt(
         id_vars='template_name',
-        value_vars=['delivered', 'failed', 'read', 'sent'],
+        value_vars=status_columns,
         var_name='Status',
         value_name='Count'
     )

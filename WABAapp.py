@@ -8,18 +8,20 @@ st.set_page_config(page_title="NPX Messaging Dashboard", layout="wide")
 st.title("📊 NPX Messaging Monitoring Dashboard")
 
 # =========================
-# FILE UPLOADER
+# FILE UPLOADER (MULTI-FILE)
 # =========================
 st.sidebar.header("📂 Upload Data")
-uploaded_file = st.sidebar.file_uploader("Upload your data file", type=["csv", "xlsx", "xls"])
+# Tambahkan accept_multiple_files=True agar user bisa pilih banyak file
+uploaded_files = st.sidebar.file_uploader(
+    "Upload your data file(s)", 
+    type=["csv", "xlsx", "xls"], 
+    accept_multiple_files=True
+)
 
-if uploaded_file is None:
-    st.info("👋 Silakan upload file data (CSV atau Excel) di sidebar sebelah kiri untuk menampilkan dashboard.")
+if not uploaded_files: # Jika list file kosong
+    st.info("👋 Silakan upload satu atau lebih file data (CSV/Excel) di sidebar sebelah kiri untuk menampilkan dashboard.")
     st.stop() # Menghentikan eksekusi script sampai file diupload
 
-# =========================
-# LOAD DATA (FLEXIBLE)
-# =========================
 # =========================
 # LOAD DATA (ANTI BADAI & BOM FIX)
 # =========================
@@ -38,7 +40,6 @@ def load_data(file):
         df = pd.read_excel(file)
         
     # 2. STANDARISASI KOLOM (Auto-Clean)
-    # Ubah ke string, hapus karakter gaib \ufeff jika masih lolos, hapus spasi, dan kecilkan huruf
     df.columns = df.columns.astype(str).str.replace('\ufeff', '').str.strip().str.lower()
     
     # 3. MAPPING KOLOM ALTERNATIF
@@ -56,31 +57,44 @@ def load_data(file):
     missing_cols = [col for col in required_columns if col not in df.columns]
     
     if missing_cols:
-        st.error(f"❌ File tidak valid. Kolom wajib berikut tidak ditemukan: {', '.join(missing_cols)}")
-        st.info(f"📌 Kolom yang terdeteksi di file Anda: {list(df.columns)}")
-        st.stop()
+        st.error(f"❌ File **{file.name}** tidak valid. Kolom wajib berikut tidak ditemukan: {', '.join(missing_cols)}")
+        st.info(f"📌 Kolom yang terdeteksi di {file.name}: {list(df.columns)}")
+        return None # Return None jika file error, agar tidak mengganggu file lain yang benar
         
     # Jika kolom error_message tidak ada, buat kolom kosong
     if 'error_message' not in df.columns:
         df['error_message'] = pd.NA
         
     # 5. CLEANING ISI DATA
-    # Konversi tanggal
     df['date'] = pd.to_datetime(df['date'], dayfirst=True, errors='coerce')
-    
-    # Hapus baris yang tanggalnya kosong
     df = df.dropna(subset=['date'])
-    
-    # Isi nilai kosong pada kategori dan template
     df['template_category'] = df['template_category'].fillna('UNKNOWN').astype(str).str.upper()
     df['template_name'] = df['template_name'].fillna('NO TEMPLATE').astype(str)
-    
     df['status'] = df['status'].astype(str).str.lower()
     
     return df
 
-# Load data dari file yang diupload
-df = load_data(uploaded_file)
+# =========================
+# GABUNGKAN SEMUA FILE YANG DIUPLOAD
+# =========================
+all_dfs = []
+for file in uploaded_files:
+    # Load setiap file
+    df_temp = load_data(file)
+    if df_temp is not None: # Hanya tambahkan jika file valid (tidak return None di pengecekan kolom)
+        all_dfs.append(df_temp)
+
+# Jika tidak ada satupun file yang valid
+if not all_dfs:
+    st.error("Semua file yang diupload tidak valid. Silakan periksa format kolomnya.")
+    st.stop()
+
+# Gabungkan semua dataframe menjadi satu
+df = pd.concat(all_dfs, ignore_index=True)
+
+# Beri info ke user berapa file yang berhasil di-load
+st.sidebar.success(f"Berhasil memuat {len(all_dfs)} file data.")
+
 
 # =========================
 # SIDEBAR FILTER

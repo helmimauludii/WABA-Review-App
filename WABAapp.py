@@ -1,57 +1,86 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from datetime import date
 
 st.set_page_config(page_title="NPX Messaging Dashboard", layout="wide")
 
 st.title("📊 NPX Messaging Monitoring Dashboard")
 
 # =========================
+# FILE UPLOADER
+# =========================
+st.sidebar.header("📂 Upload Data")
+uploaded_file = st.sidebar.file_uploader("Upload your data file", type=["csv", "xlsx", "xls"])
+
+if uploaded_file is None:
+    st.info("👋 Silakan upload file data (CSV atau Excel) di sidebar sebelah kiri untuk menampilkan dashboard.")
+    st.stop() # Menghentikan eksekusi script sampai file diupload
+
+# =========================
 # LOAD DATA
 # =========================
 @st.cache_data
-def load_data():
-    df = pd.read_excel("Data Query WABA Feb-Apr 2026.xlsx")
+def load_data(file):
+    # Cek ekstensi file untuk menentukan fungsi pandas yang tepat
+    if file.name.endswith('.csv'):
+        df = pd.read_csv(file)
+    else:
+        df = pd.read_excel(file)
+        
+    # Validasi keberadaan kolom penting
+    required_columns = ['Date', 'template_category', 'status', 'account_no', 'count', 'template_name']
+    missing_cols = [col for col in required_columns if col not in df.columns]
+    
+    if missing_cols:
+        st.error(f"❌ File tidak valid. Kolom berikut tidak ditemukan: {', '.join(missing_cols)}")
+        st.stop()
+        
+    # Jika kolom error_msg tidak ada, buat kolom kosong agar script di bawah tidak error
+    if 'error_msg' not in df.columns:
+        df['error_msg'] = pd.NA
+        
+    # Cleaning data
     df['Date'] = pd.to_datetime(df['Date'])
-    df['template_category'] = df['template_category'].str.upper()
-    df['status'] = df['status'].str.lower()
+    df['template_category'] = df['template_category'].astype(str).str.upper()
+    df['status'] = df['status'].astype(str).str.lower()
+    
     return df
 
-df = load_data()
-
-from datetime import date
+# Load data dari file yang diupload
+df = load_data(uploaded_file)
 
 # =========================
 # SIDEBAR FILTER
 # =========================
 st.sidebar.header("🔎 Filter")
 
-# 🎯 Default range Oct – Dec
-default_start = date(2026, 2, 1)
-default_end = date(2026, 4, 6)
+# 🎯 Default range otomatis menyesuaikan data yang diupload
+default_start = df['Date'].min().date()
+default_end = df['Date'].max().date()
 
 date_range = st.sidebar.date_input(
     "Date Range",
     value=[default_start, default_end],
-    min_value=df['Date'].min(),
-    max_value=df['Date'].max()
+    min_value=default_start,
+    max_value=default_end
 )
 
-# Validasi input
+# Validasi input tanggal
 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
     start_date, end_date = date_range
 else:
     st.warning("📅 Please select both start and end dates.")
     st.stop()
 
-
-account_list = sorted(df['account_no'].unique())
+account_list = sorted(df['account_no'].dropna().unique())
 selected_accounts = st.sidebar.multiselect(
     "Account Number",
     account_list,
     default=account_list
 )
 
+# Filter Dataset
 df_filtered = df[
     (df['Date'] >= pd.to_datetime(start_date)) &
     (df['Date'] <= pd.to_datetime(end_date)) &
@@ -124,17 +153,18 @@ fig_error_compare = px.bar(
 
 st.plotly_chart(fig_error_compare, use_container_width=True)
 
+# =========================
+# 4️⃣ ERROR CODE BREAKDOWN
+# =========================
 st.subheader("4️⃣ Error Code Breakdown (Month on Month)")
 
 error_df = df_filtered[df_filtered['error_msg'].notna()].copy()
 
-if not error_df.empty:
+if not error_df.empty and total_error > 0:
 
     error_df['Month'] = error_df['Date'].dt.to_period('M').astype(str)
 
-    # =========================
     # HITUNG TOTAL ERROR
-    # =========================
     total_error_per_code = error_df.groupby('error_msg')['count'].sum().sort_values(ascending=False)
 
     TOP_N = 8
@@ -143,9 +173,7 @@ if not error_df.empty:
     # Label Others
     error_df['error_group'] = error_df['error_msg'].where(error_df['error_msg'].isin(top_errors), 'Others')
 
-    # =========================
     # PIVOT
-    # =========================
     error_pivot = error_df.pivot_table(
         index='Month',
         columns='error_group',
@@ -164,9 +192,7 @@ if not error_df.empty:
     error_long = error_long.sort_values('Month')
     error_long['Month'] = error_long['Month'].dt.strftime('%b %Y')
 
-    # =========================
     # SOFT COLOR THEME
-    # =========================
     soft_colors = [
         "#4C78A8", "#72B7B2", "#B279A2", "#F2CF5B",
         "#9D755D", "#BAB0AC", "#86BCB6", "#E0A458",
@@ -174,17 +200,15 @@ if not error_df.empty:
     ]
 
     unique_errors = error_long["Error Code"].unique()
-    color_map = {err: soft_colors[i % len(soft_colors)] for i, err in enumerate(unique_errors)}
+    color_map_err = {err: soft_colors[i % len(soft_colors)] for i, err in enumerate(unique_errors)}
 
-    # =========================
     # CHART
-    # =========================
     fig_error_stack = px.bar(
         error_long,
         x='Month',
         y='Count',
         color='Error Code',
-        color_discrete_map=color_map,
+        color_discrete_map=color_map_err,
         title=f"Monthly Error Code Breakdown (Top {TOP_N} Errors)",
         barmode='stack'
     )
@@ -226,63 +250,66 @@ template_pivot = template_pivot.sort_values(by='total', ascending=False)
 
 total_templates = template_pivot.shape[0]
 
-# 🎛 Kontrol Top N
-colA, colB = st.columns([1,3])
+if total_templates > 0:
+    # 🎛 Kontrol Top N
+    colA, colB = st.columns([1,3])
 
-with colA:
-    top_n = st.number_input(
-        "Show Top N Templates",
-        min_value=5,
-        max_value=total_templates,
-        value=20,
-        step=5
+    with colA:
+        top_n = st.number_input(
+            "Show Top N Templates",
+            min_value=1,
+            max_value=total_templates,
+            value=min(20, total_templates),
+            step=5
+        )
+
+    with colB:
+        st.markdown(f"**Total Template Names Available:** {total_templates}")
+
+    # Ambil sesuai Top N
+    template_view = template_pivot.head(top_n).reset_index()
+    title_text = f"Top {top_n} Templates — Status Distribution"
+
+    # Ubah ke long format
+    template_long = template_view.melt(
+        id_vars='template_name',
+        value_vars=['delivered', 'failed', 'read', 'sent'],
+        var_name='Status',
+        value_name='Count'
     )
 
-with colB:
-    st.markdown(f"**Total Template Names Available:** {total_templates}")
+    # Warna konsisten
+    color_map = {
+        'delivered': '#4C78A8',
+        'failed': '#E45756',
+        'read': '#72B7B2',
+        'sent': '#F2CF5B'
+    }
 
-# Ambil sesuai Top N
-template_view = template_pivot.head(top_n).reset_index()
-title_text = f"Top {top_n} Templates — Status Distribution"
-
-# Ubah ke long format
-template_long = template_view.melt(
-    id_vars='template_name',
-    value_vars=['delivered', 'failed', 'read', 'sent'],
-    var_name='Status',
-    value_name='Count'
-)
-
-# Warna konsisten
-color_map = {
-    'delivered': '#4C78A8',
-    'failed': '#E45756',
-    'read': '#72B7B2',
-    'sent': '#F2CF5B'
-}
-
-# Chart
-fig_template_status = px.bar(
-    template_long,
-    x='Count',
-    y='template_name',
-    color='Status',
-    orientation='h',
-    title=title_text,
-    color_discrete_map=color_map,
-    barmode='stack'
-)
-
-fig_template_status.update_layout(
-    yaxis={'categoryorder': 'total ascending'},
-    margin=dict(l=10, r=10, t=50, b=10),
-    legend=dict(
-        orientation="h",
-        yanchor="top",
-        y=-0.25,
-        xanchor="center",
-        x=0.5
+    # Chart
+    fig_template_status = px.bar(
+        template_long,
+        x='Count',
+        y='template_name',
+        color='Status',
+        orientation='h',
+        title=title_text,
+        color_discrete_map=color_map,
+        barmode='stack'
     )
-)
 
-st.plotly_chart(fig_template_status, use_container_width=True)
+    fig_template_status.update_layout(
+        yaxis={'categoryorder': 'total ascending'},
+        margin=dict(l=10, r=10, t=50, b=10),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.25,
+            xanchor="center",
+            x=0.5
+        )
+    )
+
+    st.plotly_chart(fig_template_status, use_container_width=True)
+else:
+    st.info("No template data available for this selection.")
